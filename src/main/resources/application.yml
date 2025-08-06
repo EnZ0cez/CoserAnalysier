@@ -1,0 +1,61 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: ai-social-agent
+  
+  ai:
+    ollama:
+      base-url: http://localhost:11434
+      chat:
+        model: llama3.1
+        options:
+          temperature: 0.7
+          num-ctx: 4096
+  
+  datasource:
+    url: jdbc:h2:mem:testdb
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: password
+  
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: true
+  
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+
+logging:
+  level:
+    com.socialmedia.aiagent: DEBUG
+    org.springframework.ai: DEBUG
+
+social-media:
+  bilibili:
+    base-url: https://api.bilibili.com
+    user-agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+  douyin:
+    base-url: https://www.douyin.com
+    user-agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+  weibo:
+    base-url: https://m.weibo.cn
+    user-agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+
+agent:
+  max-content-length: 5000
+  analysis-prompt: |
+    You are an AI agent specialized in analyzing social media content from Chinese platforms.
+    Please analyze the following content and provide insights about:
+    1. Content theme and main topics
+    2. Sentiment analysis
+    3. Popular trends or hashtags
+    4. Engagement patterns
+    5. Key insights for content creators
+    
+    Content to analyze: {content}
