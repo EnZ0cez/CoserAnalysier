@@ -1,43 +1,163 @@
 version: '3.8'
 
 services:
-  # Ollama service
-  ollama:
-    image: ollama/ollama:latest
-    container_name: ollama
+  # MySQL数据库
+  mysql:
+    image: mysql:8.0
+    container_name: tourism-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root123456
+      MYSQL_DATABASE: tourism_saas
+      MYSQL_USER: tourism
+      MYSQL_PASSWORD: tourism123
     ports:
-      - "11434:11434"
+      - "3306:3306"
     volumes:
-      - ollama_data:/root/.ollama
-    environment:
-      - OLLAMA_HOST=0.0.0.0
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+      - mysql_data:/var/lib/mysql
+      - ./sql:/docker-entrypoint-initdb.d
+    command: --default-authentication-plugin=mysql_native_password
+    networks:
+      - tourism-network
 
-  # AI Social Media Agent
-  ai-social-agent:
-    build: .
-    container_name: ai-social-agent
+  # Redis缓存
+  redis:
+    image: redis:7-alpine
+    container_name: tourism-redis
     ports:
-      - "8080:8080"
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    networks:
+      - tourism-network
+
+  # RabbitMQ消息队列
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    container_name: tourism-rabbitmq
     environment:
-      - SPRING_AI_OLLAMA_BASE_URL=http://ollama:11434
-      - SPRING_AI_OLLAMA_CHAT_MODEL=llama3.1
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - tourism-network
+
+  # 用户服务
+  user-service:
+    build:
+      context: ./tourism-user-service
+      dockerfile: Dockerfile
+    container_name: tourism-user-service
+    ports:
+      - "8801:8801"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/tourism_saas?useUnicode=true&characterEncoding=utf8&zeroDateTimeBehavior=convertToNull&useSSL=false&serverTimezone=GMT%2B8&allowPublicKeyRetrieval=true
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: root123456
+      SPRING_REDIS_HOST: redis
+      SPRING_REDIS_PORT: 6379
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: guest
+      SPRING_RABBITMQ_PASSWORD: guest
     depends_on:
-      ollama:
-        condition: service_healthy
+      - mysql
+      - redis
+      - rabbitmq
+    networks:
+      - tourism-network
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/agent/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
+
+  # 产品服务
+  product-service:
+    build:
+      context: ./tourism-product-service
+      dockerfile: Dockerfile
+    container_name: tourism-product-service
+    ports:
+      - "8802:8802"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/tourism_saas?useUnicode=true&characterEncoding=utf8&zeroDateTimeBehavior=convertToNull&useSSL=false&serverTimezone=GMT%2B8&allowPublicKeyRetrieval=true
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: root123456
+      SPRING_REDIS_HOST: redis
+      SPRING_REDIS_PORT: 6379
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: guest
+      SPRING_RABBITMQ_PASSWORD: guest
+    depends_on:
+      - mysql
+      - redis
+      - rabbitmq
+    networks:
+      - tourism-network
+    restart: unless-stopped
+
+  # Nginx反向代理
+  nginx:
+    image: nginx:alpine
+    container_name: tourism-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./nginx/conf.d:/etc/nginx/conf.d
+      - ./nginx/ssl:/etc/nginx/ssl
+    depends_on:
+      - user-service
+      - product-service
+    networks:
+      - tourism-network
+    restart: unless-stopped
+
+  # 监控服务 - Prometheus
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: tourism-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - tourism-network
+
+  # 监控服务 - Grafana
+  grafana:
+    image: grafana/grafana:latest
+    container_name: tourism-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin123
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+    depends_on:
+      - prometheus
+    networks:
+      - tourism-network
 
 volumes:
-  ollama_data:
+  mysql_data:
+  redis_data:
+  rabbitmq_data:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  tourism-network:
+    driver: bridge
